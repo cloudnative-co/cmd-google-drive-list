@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="GDriveList",
-    version="1.0.2",
+    version="1.0.3",
     description="List of Google Drive",
     author="sebastian",
     author_email="seba@cloudnative.co.jp",
@@ -12,7 +12,7 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            'GLS = GLS.__init__:main'
+            'gls = GLS.__init__:main'
         ]
     },
 )
