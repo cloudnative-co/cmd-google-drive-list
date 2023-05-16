@@ -38,6 +38,9 @@ class GDriveList(object):
             self.cfg["domain"] = domain
         else:
             domain = self.cfg["domain"]
+
+        with open(self.cfg_path, "w") as cfg_fd:
+            cfg_fd.write(json.dumps(self.cfg, indent=4))
         users = list()
         page_token = None
         print("Get user list")
