@@ -82,7 +82,7 @@ class GDriveList(object):
         ]
         fields = f"nextPageToken,files({','.join(f)})"
         while True:
-            res = self.gsuite.drive.files.list(
+            res = gdrive.drive.files.list(
                 page_token=page_token, page_size=1000, fields=fields,
                 include_items_from_all_drives = True,
                 supports_all_drives = True
