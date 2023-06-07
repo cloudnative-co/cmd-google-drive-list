@@ -4,6 +4,8 @@ import json
 import numpy
 import os
 import sys
+import threading
+import time
 
 import Google.GSuite
 
@@ -12,8 +14,16 @@ class GDriveList(object):
 
     records = list()
     auth = None
+    file_counter = 0
+    savepath = None
+    max_rec = 1200
+    rec_lock = threading.Lock()
+    file_lock = threading.Lock()
 
-    def __init__(self, profile_name: str = "default", username: str = None):
+    def __init__(
+        self, profile_name: str = "default", username: str = None,
+        savepath: str = None, max_records: int = 0
+    ):
         json_result = {}
         uhome = os.path.expanduser("~")
         auth_path = f"{uhome}/.gws/{profile_name}.json"
@@ -32,8 +42,10 @@ class GDriveList(object):
         elif "username" in self.cfg:
             username = self.cfg["username"]
         self.gsuite.username = self.cfg["username"]
+        self.savepath = savepath
+        self.max_rec = int(max_records)
 
-    def start(self, domain: str = None):
+    def start(self, domain: str = None, max_threads: int = 4):
         if domain:
             self.cfg["domain"] = domain
         else:
@@ -53,17 +65,14 @@ class GDriveList(object):
                 page_token = res["nextPageToken"]
             else:
                 break
-        num = len(users)
-        files = []
-        with concurrent.futures.ThreadPoolExecutor(max_workers=num) as exc:
-            for recs in exc.map(self.get_files, users):
-                files.extend(recs)
-        print("Duplicate delete process")
-        records = list(set(files))
-        max_rec = 1000000
-        num = len(records)
-        for i in range(0, num, max_rec):
-            self.records.append(records[i:i+max_rec])
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=max_threads
+        ) as exc:
+            exc.map(self.get_files, users)
+
+        out_rec = self.get_max_records()
+        if len(out_rec) > 0:
+            self.file_save(records=out_rec)
 
     def get_files(self, user: dict):
         email = user["primaryEmail"]
@@ -81,20 +90,58 @@ class GDriveList(object):
             "sharedWithMeTime", "parents", "driveId", permissions
         ]
         fields = f"nextPageToken,files({','.join(f)})"
+        retry = 0
         while True:
-            res = gdrive.drive.files.list(
-                page_token=page_token, page_size=1000, fields=fields,
-                include_items_from_all_drives = True,
-                supports_all_drives = True
-            )
-            files.extend(res["files"])
-            if "nextPageToken" in res:
-                page_token = res["nextPageToken"]
-            else:
-                break
-        files = list(map(self.make_record, files))
-        print(f"User ({email}): process end")
+            try:
+                res = gdrive.drive.files.list(
+                    page_token=page_token, page_size=1000, fields=fields,
+                    include_items_from_all_drives=True,
+                    supports_all_drives=True
+                )
+                files = list(map(self.make_record, res["files"]))
+                num = self.add_records(files)
+                if num >= self.max_rec:
+                    out_rec = self.get_max_records()
+                    self.file_save(records=out_rec)
+                retry = 0
+                if "nextPageToken" in res:
+                    print(f"User [{email}]: get next page")
+                    page_token = res["nextPageToken"]
+                    time.sleep(0.1)
+                else:
+                    break
+            except Exception as e:
+                print(e)
+                if retry == 3:
+                    break
+                else:
+                    retry += 1
+
+        print(f"User [{email}]: process end")
         return files
+
+    def get_max_records(self):
+        with self.rec_lock:
+            ret = self.records.copy()
+            ret = ret[:self.max_rec]
+            self.records = self.records[self.max_rec:]
+        return ret
+
+    def file_save(self, records):
+        with self.file_lock:
+            base, ext = os.path.splitext(self.savepath)
+            self.file_counter += 1
+            savepath = f"{base}_{str(self.file_counter).zfill(3)}{ext}"
+            with open(savepath, "w") as f:
+                f.write("\n".join(records))
+            print(f"File out [{savepath}]")
+
+    def add_records(self, files):
+        with self.rec_lock:
+            files = list(set(files))
+            self.records.extend(files)
+            num = len(self.records)
+        return num
 
     def make_record(self, file):
         sep = "|"
@@ -132,29 +179,29 @@ class GDriveList(object):
             f'"{file.get("permissions", "")}"',
         ])
 
-    def save(self, savepath: str = None):
-        count = 1
-        for records in self.records:
-            result = "\n".join(records)
-            if len(self.records) > 1:
-                base, ext = os.path.splitext(savepath)
-                s_path = f"{base}_{str(count).zfill(3)}{ext}"
-            else:
-                s_path = savepath
-            print(f"{s_path}に保存")
-            with open(s_path, "w") as f:
-                f.write(result)
-            count = count + 1
-
 
 def get_args():
     parser = argparse.ArgumentParser(
-        description="Google WorkSpace ドライブファイル一覧出力ツール",
+        prog="gls",
+        description="Google WorkSpace ドライブファイル一覧出力ツール ver.1.0.5",
         formatter_class=argparse.RawTextHelpFormatter
     )
-    parser.add_argument('--domain', '-d', help='Google WorkSpaceのドメイン名を指定します')
-    parser.add_argument('--user', '-u', help='Google WorkSpaceの実行ユーザー名を指定します')
-    parser.add_argument('--profile', '-p', help='読込プロファイル', default="default")
+    parser.add_argument(
+        '--domain', '-d', help='Google WorkSpaceのドメイン名を指定します'
+    )
+    parser.add_argument(
+        '--user', '-u', help='Google WorkSpaceの実行ユーザー名を指定します'
+    )
+    parser.add_argument(
+        '--profile', '-p', help='読込プロファイル', default="default"
+    )
+
+    parser.add_argument(
+        '--threads', '-t', help='最大スレッド数', default=os.cpu_count()
+    )
+    parser.add_argument(
+        '--line', '-l', help='出力するCSVファイルの最大行数', default=1000000
+    )
     parser.add_argument(
         '--savepath', '-s', help='保存先パス', default="gdrive_files.csv"
     )
@@ -164,10 +211,11 @@ def get_args():
 
 def main():
     args = get_args()
-
-    gls = GDriveList(profile_name=args.profile, username=args.user)
-    gls.start(domain=args.domain)
-    gls.save(savepath=args.savepath)
+    gls = GDriveList(
+        profile_name=args.profile, username=args.user,
+        savepath=args.savepath, max_records=int(args.line)
+    )
+    gls.start(domain=args.domain, max_threads=int(args.threads))
 
 
 if __name__ == '__main__':

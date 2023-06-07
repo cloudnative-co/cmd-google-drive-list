@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="GDriveList",
-    version="1.0.3",
+    version="1.0.5",
     description="List of Google Drive",
     author="sebastian",
     author_email="seba@cloudnative.co.jp",
