@@ -87,7 +87,7 @@ class GDriveList(object):
         permissions = f"permissions({','.join(permissions)})"
         f = [
             "name", "id", owners, "createdTime", "modifiedTime",
-            "sharedWithMeTime", "parents", "driveId", permissions
+            "sharedWithMeTime", "parents", "driveId", permissions, "sharingUser(emailAddress)"
         ]
         fields = f"nextPageToken,files({','.join(f)})"
         retry = 0
@@ -158,6 +158,8 @@ class GDriveList(object):
                     owner_emailaddress.append(ea)
             file["owner_displayName"] = sep.join(owner_displayname)
             file["owner_emailAddress"] = sep.join(owner_emailaddress)
+            sharing_user = file.pop("sharingUser", {})
+            file["sharingUserEmailAddress"] = sharing_user.pop("emailAddress", "")
 
             for key in ["permissions", "parents"]:
                 data = file.pop(key, [])
@@ -177,6 +179,7 @@ class GDriveList(object):
             f'"{file.get("parents", "")}"',
             f'"{file.get("driveId", "")}"',
             f'"{file.get("permissions", "")}"',
+            f'"{file.get("sharingUserEmailAddress", "")}"',
         ])
 
 
